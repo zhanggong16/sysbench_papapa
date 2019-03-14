@@ -1,0 +1,243 @@
+# vim ft=yaml
+#
+# Travis CI configuration
+
+dist: trusty
+sudo: required
+
+services:
+  - docker
+  - mysql
+  - postgresql
+
+git:
+  depth: 100500
+
+language: c
+
+os:
+  - linux
+  - osx
+
+compiler:
+  - gcc
+  - clang
+
+env:
+    matrix:
+      - TARGET=distcheck
+      - TARGET=test
+      - TARGET=coverage
+      - OS=el DIST=6
+      - OS=el DIST=7
+      - OS=fedora DIST=28
+      - OS=fedora DIST=29
+      - OS=fedora DIST=rawhide
+      - OS=ubuntu DIST=trusty
+      - OS=ubuntu DIST=xenial
+      - OS=ubuntu DIST=bionic
+      - OS=ubuntu DIST=cosmic
+      - OS=debian DIST=jessie
+      - OS=debian DIST=stretch
+      - OS=debian DIST=sid
+      - OS=ubuntu DIST=trusty ARCH=i386
+      - OS=ubuntu DIST=xenial ARCH=i386
+      - OS=ubuntu DIST=bionic ARCH=i386
+      - OS=ubuntu DIST=cosmic ARCH=i386
+      - OS=debian DIST=jessie ARCH=i386
+      - OS=debian DIST=stretch ARCH=i386
+      - OS=debian DIST=sid ARCH=i386
+
+matrix:
+  exclude:
+    - env: OS=el DIST=6
+      compiler: clang
+    - env: OS=el DIST=7
+      compiler: clang
+    - env: OS=fedora DIST=28
+      compiler: clang
+    - env: OS=fedora DIST=29
+      compiler: clang
+    - env: OS=fedora DIST=rawhide
+      compiler: clang
+    - env: OS=ubuntu DIST=trusty
+      compiler: clang
+    - env: OS=ubuntu DIST=xenial
+      compiler: clang
+    - env: OS=ubuntu DIST=bionic
+      compiler: clang
+    - env: OS=ubuntu DIST=cosmic
+      compiler: clang
+    - env: OS=debian DIST=jessie
+      compiler: clang
+    - env: OS=debian DIST=stretch
+      compiler: clang
+    - env: OS=debian DIST=sid
+      compiler: clang
+    - env: OS=ubuntu DIST=trusty ARCH=i386
+      compiler: clang
+    - env: OS=ubuntu DIST=xenial ARCH=i386
+      compiler: clang
+    - env: OS=ubuntu DIST=bionic ARCH=i386
+      compiler: clang
+    - env: OS=ubuntu DIST=cosmic ARCH=i386
+      compiler: clang
+    - env: OS=debian DIST=jessie ARCH=i386
+      compiler: clang
+    - env: OS=debian DIST=stretch ARCH=i386
+      compiler: clang
+    - env: OS=debian DIST=sid ARCH=i386
+      compiler: clang
+    - env: OS=el DIST=6
+      os: osx
+    - env: OS=el DIST=7
+      os: osx
+    - env: OS=fedora DIST=28
+      os: osx
+    - env: OS=fedora DIST=29
+      os: osx
+    - env: OS=fedora DIST=rawhide
+      os: osx
+    - env: OS=ubuntu DIST=trusty
+      os: osx
+    - env: OS=ubuntu DIST=xenial
+      os: osx
+    - env: OS=ubuntu DIST=bionic
+      os: osx
+    - env: OS=ubuntu DIST=cosmic
+      os: osx
+    - env: OS=debian DIST=jessie
+      os: osx
+    - env: OS=debian DIST=stretch
+      os: osx
+    - env: OS=debian DIST=sid
+      os: osx
+    - env: TARGET=distcheck
+      compiler: clang
+    - env: TARGET=distcheck
+      os: osx
+    - env: TARGET=coverage
+      os: osx
+    - env: TARGET=coverage
+      compiler: clang
+    - os: osx
+      compiler: gcc
+
+addons:
+  apt:
+    packages:
+    - libmysqlclient-dev
+    - libpq-dev
+    - libaio-dev
+    - clang-3.6
+
+before_install:
+  # Upload builds corresponding to release tags to the 'sysbench'
+  # repository, push other ones to 'sysbench-prereleases'
+  - git describe --long --always
+  - commits=$(git describe --long --always | sed -n 's/^\([0-9\.]*\)-\([0-9]*\)-\([a-z0-9]*\)/\2/p')
+  - >
+    if [ ${commits:-0} = 0 ]; then
+      export VERSION=$(git describe)
+      PACKAGECLOUD_REPO=sysbench
+    else
+      PACKAGECLOUD_REPO=sysbench-prereleases
+    fi
+  - >
+    if [ "x$TARGET" = "xtest" ]; then
+      case "${TRAVIS_OS_NAME:-linux}" in
+      osx)
+        brew install mysql
+
+        # OS X requires servers to be started explicitly
+        brew services start mysql
+
+        # Avoid PostgreSQL upgrade woes, just reinstall the database
+        brew uninstall --ignore-dependencies postgresql
+        rm -rf /usr/local/var/postgres
+        brew install postgresql
+
+        echo "Starting PostgreSQL"
+        pg_ctl -wD /usr/local/var/postgres start
+        echo "Creating user postgres"
+        createuser -s postgres
+        ;;
+      linux)
+        export ASAN_OPTIONS="detect_leaks=0"
+        if [ "${CC}" = "clang" ]; then
+          CC=clang-3.6
+        fi
+        ;;
+      esac
+    fi
+
+install:
+  - pip2 install --user urllib3[secure] cpp-coveralls
+  - >
+    case "${TRAVIS_OS_NAME:-linux}" in
+    osx)
+      # OS X requires this for user-local pip packages
+      export PATH=~/Library/Python/2.7/bin:$PATH
+      ;;
+    esac
+
+before_script:
+  - mysql -u root -e 'CREATE DATABASE sbtest'
+  - psql -U postgres -c 'CREATE DATABASE sbtest'
+
+script:
+  - >
+    if [ -n "$TARGET" ]; then
+      case "$TARGET" in
+      test)
+        ./autogen.sh && ./configure --with-mysql --with-pgsql
+        make
+        SBTEST_MYSQL_ARGS="--mysql-user=root" SBTEST_PGSQL_ARGS="--pgsql-user=postgres" make test
+        ;;
+      distcheck)
+        ./autogen.sh && ./configure --without-mysql
+        make
+        make distcheck
+        ;;
+      coverage)
+        ./autogen.sh && ./configure --enable-coverage --enable-asan --enable-msan --with-mysql --with-pgsql
+        make -j2
+        SBTEST_MYSQL_ARGS="--mysql-user=root" SBTEST_PGSQL_ARGS="--pgsql-user=postgres" make test
+        ;;
+      esac
+    else
+      # To avoid name conflicts, deploy source packages only for
+      # "default", i.e. x86_64 architecture
+      if [[ -z "${ARCH}" ]]; then
+        PACKAGECLOUD_GLOB='build/*.{rpm,deb,dsc}'
+      else
+      # Exclude *.src.rpm and *.dsc
+        PACKAGECLOUD_GLOB='build/*{[^c].rpm,.deb}'
+      fi
+
+      git clone https://github.com/akopytov/packpack.git packpack
+      packpack/packpack
+    fi
+
+deploy:
+  # Deploy packages to PackageCloud
+  - provider: packagecloud
+    username: "${PACKAGECLOUD_USER}"
+    repository: "${PACKAGECLOUD_REPO}"
+    token: "${PACKAGECLOUD_TOKEN}"
+    dist: "${OS}/${DIST}"
+    package_glob: "${PACKAGECLOUD_GLOB}"
+    skip_cleanup: true
+    on:
+      all_branches: true
+      condition: -n "$OS" && -n "$DIST" && -n "$PACKAGECLOUD_TOKEN" && "$DIST" != "rawhide" && "$DIST" != "sid"
+
+after_success:
+  - >
+    if [ "x$TARGET" = "xcoverage" ]; then
+      coveralls --exclude third_party/ --gcov-options '\-lp'
+    fi
+
+# Local variables:
+# mode: yaml
+# End:
