@@ -9,4 +9,6 @@ sysbench只支持1.0以上的版本。
 
 ## 使用
 python sysbench_papapa.py --host=127.0.0.1:3307 --user=hcloud --password=hcloud
+
+
 结果将打印在sysbench_result文件夹下，result.xlsx是最终结果文件。
