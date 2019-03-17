@@ -6,6 +6,8 @@
 import os, sys
 import click
 import time
+import xlsxwriter
+import re
 from collections import namedtuple
 from utils import (
 	logger,
@@ -19,9 +21,9 @@ class SB(object):
             'db': "sbtest",
             'table_size': 10000,
             'tables': 6,
-            'run_time': 30,
+            'run_time': 60,
             'threads': {
-                        'normal': [4, 8]
+                        'normal': [4, 8, 16]
                         },
             'oltp': {
                     'wr': "oltp_read_write.lua",
@@ -48,6 +50,7 @@ logging = logger(logfile)
 
 subprefix = time.strftime('%Y%m%d_%H%M%S',time.localtime(time.time()))
 res_dir = "%s/sysbench_result/%s" % (base_dir, subprefix)
+    
 
 def _run(cmd, display=0):
     try:
@@ -166,9 +169,9 @@ def sysbench_run(host, user, password):
             os.makedirs(res_dir)
         _message("将要开始压力测试，压测场景%s，并发%s，结果输出路径%s。" % (sb.oltp_nick.split('.')[0], sb.threads, res_dir))
         for t in sb.threads:
-            _message("并发%s，run压测即将开始。" % t)
+            _message("并发%s，持续时间%ss，run压测即将开始。" % (t, sb.run_time))
             run_opt = " --threads={threads} --time={time}".format(threads=t, time=sb.run_time)
-            export_file = "%s/%s_%s.log" % (res_dir, sb.oltp_nick.split('.')[0], t)
+            export_file = "%s/%s-%s" % (res_dir, sb.oltp_nick.split('.')[0], t)
             cmd = base_cmd + parameter_opt + run_opt + auth_opt + ' run > ' + export_file
             code, out, err = _run(cmd, sb.run_time)
             if code == 0:
@@ -200,7 +203,72 @@ def sysbench_run(host, user, password):
         return True
     else:
         return False
+ 
+def get_excl():
+
+    logging.info("start get_excl.")
+    excel_file = '%s/result.xlsx' % (res_dir)
+    workbook = xlsxwriter.Workbook(excel_file)
+    worksheet = workbook.add_worksheet()
+    bold = workbook.add_format({'bold': 1})
+    data_list = []
+    left_list, tps_list, qps_list = [], [], []
+    head_list = ['Indicator', 'TPS', 'QPS']
+    for maindir, subdir, file_name_list in os.walk(res_dir):
+        count = len(file_name_list) + 1
+        for file_name in file_name_list:
+            if not re.match('result', file_name):
+                olpt, thread = file_name.split('-')
+                left_list.append("%s" % thread)
+                cmd = "cat %s/%s |grep -e 'transactions:' -e 'queries:'|awk -F['(',' ']+ '{print $4}'" % (maindir, file_name)
+                code, out, err = _run(cmd)
+                if code == 0 and out:
+                    tps, qps = out.split()
+                    tps_list.append(float(tps))
+                    qps_list.append(float(qps))
+                else:
+                    return False
+    if not tps_list or not qps_list:
+        _message("去读sysbench结果文件失败，退出。" % excel_file)
+        return False
+    data_list.append(left_list)
+    data_list.append(tps_list)
+    data_list.append(qps_list)
+    # write excel
+    worksheet.write_row('A1', head_list, bold)    
+    if len(data_list) > 27:
+        _message("excl的列数太大，不支持生成excl文件，退出。")
+        return False
+    li = [chr(i) for i in range(ord("A"),ord("Z")+1)]
+    column_list = ["%s2" % c for c in li]
+    for data in data_list:
+        worksheet.write_column(column_list[data_list.index(data)], data)
+    # add chart
+    chart_col = workbook.add_chart({'type': 'line'})
     
+    chart_col.add_series({
+        'name': '=Sheet1!$B$1',
+        'categories': '=Sheet1!$A$2:$A$%s' % count,
+        'values': '=Sheet1!$B$2:$B$%s' % count,
+        'line': {'color': 'gray'},
+    })
+    chart_col.add_series({
+        'name': '=Sheet1!$C$1',
+        'categories': '=Sheet1!$A$2:$A$%s' % count,
+        'values': '=Sheet1!$C$2:$C$%s' % count,
+        'line': {'color': 'lime'},
+    })
+    
+    chart_col.set_title({'name': 'performance benchmark test'})
+    chart_col.set_x_axis({'name': 'concurrency'})
+    chart_col.set_y_axis({'name': 'number'})
+
+    chart_col.set_style(1)
+    worksheet.insert_chart('A10', chart_col, {'x_offset': 25, 'y_offset': 10})
+
+    workbook.close()
+    _message("已经生成excl文件，%s。" % excel_file)
+    return True
 
 @click.command()
 @click.option('--host', required=True, type=str, help='host_ip:mysql_port, ex: 127.0.0.1:3306.')
@@ -211,14 +279,16 @@ def main(host, user, password, drop):
     if drop:
         drop_testdb(host, user, password)
         sys.exit(0)
-    # check environment
     if not check_env(host, user, password):
         _message("环境检查失败，请查看日志，退出。")
         sys.exit(0)
     if not sysbench_run(host, user, password):
         _message("执行sysbench命令失败，请查看日志，退出。")
         sys.exit(0) 
-    
+    if not get_excl():
+        _message("整理结果出现问题，请查看日志和%s的sysbench的输出，退出。" % res_dir)
+        sys.exit(0)    
+    _message("压力测试已经全部结束。")
 
 if __name__ == "__main__":
     logging.info("========%s starting========" % script)

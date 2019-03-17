@@ -1,2 +1,2 @@
 pip install eventlet
-pip install click pymysql
+pip install click pymysql xlsxwriter
