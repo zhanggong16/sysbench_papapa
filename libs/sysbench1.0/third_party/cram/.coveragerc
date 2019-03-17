@@ -1,6 +1,0 @@
-[run]
-omit =
-    cram/__main__.py
-    cram/_encoding.py
-    scripts/cram
-source = cram
