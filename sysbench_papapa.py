@@ -19,11 +19,11 @@ from utils import (
 class SB(object):
     sc = {
             'db': "sbtest",
-            'table_size': 10000,
-            'tables': 6,
-            'run_time': 60,
+            'table_size': 1000000,
+            'tables': 5,
+            'run_time': 10,
             'threads': {
-                        'normal': [4, 8, 16]
+                        'normal': [4, 8, 16, 32, 64]
                         },
             'oltp': {
                     'wr': "oltp_read_write.lua",
